@@ -150,3 +150,152 @@ def test_get_upcoming_tasks_sorted(owner, pet, scheduler):
     scheduler.add_task(task2)
     result = scheduler.get_upcoming_tasks()
     assert result[0].scheduled_at < result[1].scheduled_at
+
+
+# --- sort_by_time ---
+
+def test_sort_by_time_correct_order(owner, pet, scheduler):
+    t1 = owner.create_task(pet, "Walk",     datetime(2099, 1, 1, 18, 0))
+    t2 = owner.create_task(pet, "Feed",     datetime(2099, 1, 1, 7, 0))
+    t3 = owner.create_task(pet, "Grooming", datetime(2099, 1, 1, 12, 0))
+    for t in [t1, t2, t3]:
+        scheduler.add_task(t)
+    result = scheduler.sort_by_time()
+    assert result == [t2, t3, t1]
+
+def test_sort_by_time_single_task(owner, pet, scheduler, future_time):
+    task = owner.create_task(pet, "Walk", future_time)
+    scheduler.add_task(task)
+    assert scheduler.sort_by_time() == [task]
+
+def test_sort_by_time_empty(scheduler):
+    assert scheduler.sort_by_time() == []
+
+def test_sort_by_time_does_not_mutate(owner, pet, scheduler):
+    t1 = owner.create_task(pet, "Walk", datetime(2099, 1, 1, 18, 0))
+    t2 = owner.create_task(pet, "Feed", datetime(2099, 1, 1, 7, 0))
+    scheduler.add_task(t1)
+    scheduler.add_task(t2)
+    scheduler.sort_by_time()
+    assert scheduler.tasks[0] == t1  # original order unchanged
+
+
+# --- Recurrence ---
+
+def test_mark_complete_sets_status(owner, pet, scheduler, future_time):
+    task = owner.create_task(pet, "Walk", future_time)
+    task.recurrence = "daily"
+    scheduler.add_task(task)
+    scheduler.mark_complete(task.id)
+    assert task.status == "completed"
+
+def test_mark_complete_daily_creates_next_task(owner, pet, scheduler):
+    task = owner.create_task(pet, "Walk", datetime(2099, 1, 1, 8, 0))
+    task.recurrence = "daily"
+    scheduler.add_task(task)
+    next_task = scheduler.mark_complete(task.id)
+    assert next_task is not None
+    assert next_task.scheduled_at == datetime(2099, 1, 2, 8, 0)
+
+def test_mark_complete_weekly_creates_next_task(owner, pet, scheduler):
+    task = owner.create_task(pet, "Grooming", datetime(2099, 1, 1, 10, 0))
+    task.recurrence = "weekly"
+    scheduler.add_task(task)
+    next_task = scheduler.mark_complete(task.id)
+    assert next_task is not None
+    assert next_task.scheduled_at == datetime(2099, 1, 8, 10, 0)
+
+def test_mark_complete_next_task_inherits_fields(owner, pet, scheduler):
+    task = owner.create_task(pet, "Walk", datetime(2099, 1, 1, 8, 0))
+    task.recurrence = "daily"
+    task.description = "Morning walk"
+    scheduler.add_task(task)
+    next_task = scheduler.mark_complete(task.id)
+    assert next_task.action == task.action
+    assert next_task.description == task.description
+    assert next_task.pet == task.pet
+    assert next_task.owner_id == task.owner_id
+    assert next_task.recurrence == "daily"
+
+def test_mark_complete_next_task_is_pending(owner, pet, scheduler):
+    task = owner.create_task(pet, "Walk", datetime(2099, 1, 1, 8, 0))
+    task.recurrence = "daily"
+    scheduler.add_task(task)
+    next_task = scheduler.mark_complete(task.id)
+    assert next_task.status == "pending"
+
+def test_mark_complete_next_task_has_new_id(owner, pet, scheduler):
+    task = owner.create_task(pet, "Walk", datetime(2099, 1, 1, 8, 0))
+    task.recurrence = "daily"
+    scheduler.add_task(task)
+    next_task = scheduler.mark_complete(task.id)
+    assert next_task.id != task.id
+
+def test_mark_complete_next_task_added_to_scheduler(owner, pet, scheduler):
+    task = owner.create_task(pet, "Walk", datetime(2099, 1, 1, 8, 0))
+    task.recurrence = "daily"
+    scheduler.add_task(task)
+    next_task = scheduler.mark_complete(task.id)
+    assert next_task in scheduler.tasks
+
+def test_mark_complete_no_recurrence_returns_none(owner, pet, scheduler, future_time):
+    task = owner.create_task(pet, "Walk", future_time)
+    scheduler.add_task(task)
+    result = scheduler.mark_complete(task.id)
+    assert result is None
+
+def test_mark_complete_no_recurrence_no_new_task(owner, pet, scheduler, future_time):
+    task = owner.create_task(pet, "Walk", future_time)
+    scheduler.add_task(task)
+    scheduler.mark_complete(task.id)
+    assert len(scheduler.tasks) == 1
+
+def test_mark_complete_nonexistent_task(scheduler):
+    result = scheduler.mark_complete("does-not-exist")
+    assert result is None
+
+
+# --- Conflict detection ---
+
+def test_no_conflict_different_times(owner, pet, second_pet, scheduler):
+    t1 = owner.create_task(pet,        "Walk", datetime(2099, 1, 1, 8, 0))
+    t2 = owner.create_task(second_pet, "Feed", datetime(2099, 1, 1, 9, 0))
+    scheduler.add_task(t1)
+    assert scheduler._get_conflicts(t2) == []
+
+def test_conflict_same_time_different_pets(owner, pet, second_pet, scheduler):
+    t1 = owner.create_task(pet,        "Walk", datetime(2099, 1, 1, 8, 0))
+    t2 = owner.create_task(second_pet, "Feed", datetime(2099, 1, 1, 8, 0))
+    scheduler.add_task(t1)
+    assert t1 in scheduler._get_conflicts(t2)
+
+def test_conflict_same_time_same_pet(owner, pet, scheduler):
+    t1 = owner.create_task(pet, "Walk", datetime(2099, 1, 1, 8, 0))
+    t2 = owner.create_task(pet, "Feed", datetime(2099, 1, 1, 8, 0))
+    scheduler.add_task(t1)
+    assert t1 in scheduler._get_conflicts(t2)
+
+def test_conflict_warning_printed(owner, pet, second_pet, scheduler, capsys):
+    t1 = owner.create_task(pet,        "Walk",     datetime(2099, 1, 1, 8, 0))
+    t2 = owner.create_task(second_pet, "Grooming", datetime(2099, 1, 1, 8, 0))
+    scheduler.add_task(t1)
+    scheduler.add_task(t2)
+    captured = capsys.readouterr()
+    assert "Warning" in captured.out
+    assert "Walk" in captured.out
+    assert "Grooming" in captured.out
+
+def test_no_conflict_warning_when_no_overlap(owner, pet, scheduler, capsys):
+    t1 = owner.create_task(pet, "Walk", datetime(2099, 1, 1, 8, 0))
+    t2 = owner.create_task(pet, "Feed", datetime(2099, 1, 1, 9, 0))
+    scheduler.add_task(t1)
+    scheduler.add_task(t2)
+    captured = capsys.readouterr()
+    assert "Warning" not in captured.out
+
+def test_conflicting_tasks_both_added(owner, pet, second_pet, scheduler):
+    t1 = owner.create_task(pet,        "Walk", datetime(2099, 1, 1, 8, 0))
+    t2 = owner.create_task(second_pet, "Feed", datetime(2099, 1, 1, 8, 0))
+    scheduler.add_task(t1)
+    scheduler.add_task(t2)
+    assert t1 in scheduler.tasks and t2 in scheduler.tasks
