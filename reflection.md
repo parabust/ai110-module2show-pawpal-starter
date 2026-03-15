@@ -6,6 +6,10 @@
 
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
+Task class - stores information about tasks.
+Scheduler class - organizes and displays tasks.
+Owner class - stores information about the owner.
+Pet class - stores information about the pet. 
 
 **b. Design changes**
 
