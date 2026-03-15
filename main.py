@@ -24,6 +24,10 @@ vet_checkup.description = "Annual checkup and vaccinations"
 grooming = owner.create_task(whiskers, "Grooming", datetime(2026, 3, 15, 16, 30))
 grooming.description = "Brush coat and trim nails"
 
+# Intentional conflict: same time as evening_walk to trigger a warning
+playtime = owner.create_task(whiskers, "Playtime", datetime(2026, 3, 15, 18, 0))
+playtime.description = "Indoor play session with feather toy"
+
 evening_walk = owner.create_task(buddy, "Walk", datetime(2026, 3, 15, 18, 0))
 evening_walk.description = "Evening walk around the neighborhood"
 
